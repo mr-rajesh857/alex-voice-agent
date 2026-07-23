@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import { apiRequest } from "@/lib/api";
 
 interface ChatMessage {
   id: string;
@@ -17,10 +18,32 @@ interface ChatMessage {
   };
 }
 
+interface ChatSession {
+  id: string;
+  title: string;
+  started_at: string;
+}
+
+interface BackendChatResponse {
+  session_id: string;
+  response_text: string;
+  intent?: string;
+  requires_confirmation: boolean;
+  pending_confirmation: boolean;
+  confirmation_payload?: {
+    tool_name: string;
+    tool_args: Record<string, any>;
+    message: string;
+  };
+  tool_result?: Record<string, any>;
+}
+
 export default function ChatDashboardPage() {
   const { user, token, isLoading, logout } = useAuth();
   const router = useRouter();
 
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -31,6 +54,8 @@ export default function ChatDashboardPage() {
   useEffect(() => {
     if (!isLoading && !token) {
       router.push("/login");
+    } else if (token) {
+      fetchUserSessions();
     }
   }, [isLoading, token, router]);
 
@@ -38,76 +63,90 @@ export default function ChatDashboardPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
-  if (isLoading || !token) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
-        <div className="flex items-center space-x-3 text-slate-400">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-          <span className="text-sm font-medium">Authenticating session...</span>
-        </div>
-      </main>
-    );
-  }
+  const fetchUserSessions = async () => {
+    try {
+      const data = await apiRequest<ChatSession[]>("/chat/sessions");
+      setSessions(data);
+    } catch (err) {
+      console.error("Failed to load sessions:", err);
+    }
+  };
 
-  const handleSendMessage = (textToSend?: string) => {
+  const loadSessionTurns = async (sid: string) => {
+    setSessionId(sid);
+    try {
+      const turns = await apiRequest<{ id: string; role: string; content: string; created_at: string }[]>(
+        `/chat/sessions/${sid}/turns`
+      );
+      const formattedMsgs: ChatMessage[] = turns.map((t) => ({
+        id: t.id,
+        sender: t.role === "user" ? "user" : "assistant",
+        text: t.content,
+        timestamp: t.created_at ? new Date(t.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
+      }));
+      setMessages(formattedMsgs);
+    } catch (err) {
+      console.error("Failed to load turns:", err);
+    }
+  };
+
+  const handleSendMessage = async (textToSend?: string, confirmationResponse?: boolean) => {
     const query = textToSend || inputText;
-    if (!query.trim()) return;
+    if (!query.trim() && confirmationResponse === undefined) return;
 
-    const userMsg: ChatMessage = {
-      id: Date.now().toString(),
-      sender: "user",
-      text: query,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
+    if (query.trim()) {
+      const userMsg: ChatMessage = {
+        id: Date.now().toString(),
+        sender: "user",
+        text: query,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      setMessages((prev) => [...prev, userMsg]);
+    }
 
-    setMessages((prev) => [...prev, userMsg]);
     if (!textToSend) setInputText("");
     setIsTyping(true);
 
-    // Simulated Assistant & LangGraph flow preview
-    setTimeout(() => {
-      setIsTyping(false);
-      
-      const lower = query.toLowerCase();
-      let reply: ChatMessage;
+    try {
+      const res = await apiRequest<BackendChatResponse>("/chat/message", {
+        method: "POST",
+        body: JSON.stringify({
+          session_id: sessionId,
+          input_text: query || "Confirmation Response",
+          confirmation_response: confirmationResponse,
+        }),
+      });
 
-      if (lower.includes("meeting") || lower.includes("schedule") || lower.includes("calendar")) {
-        reply = {
-          id: (Date.now() + 1).toString(),
-          sender: "assistant",
-          text: "I have prepared the calendar event based on your request. Please confirm before I fix this in your calendar:",
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          confirmation: {
-            toolName: "calendar-mcp.create_event",
-            summary: "Schedule Sync Meeting with Team tomorrow at 3:00 PM",
-            details: { title: "Team Sync", start: "Tomorrow, 3:00 PM", duration: "30 mins" },
-            status: "pending",
-          },
-        };
-      } else if (lower.includes("reminder")) {
-        reply = {
-          id: (Date.now() + 1).toString(),
-          sender: "assistant",
-          text: "I've extracted your reminder details: **Reminder**: Review project proposal today at 6:00 PM. Shall I save this?",
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          confirmation: {
-            toolName: "reminders-mcp.set_reminder",
-            summary: "Set reminder: 'Review project proposal' today at 6:00 PM",
-            details: { text: "Review project proposal", time: "Today, 6:00 PM" },
-            status: "pending",
-          },
-        };
-      } else {
-        reply = {
-          id: (Date.now() + 1).toString(),
-          sender: "assistant",
-          text: `Hello ${user?.name || "there"}! I'm Alex, your AI assistant. I can manage your calendar, set reminders, resolve contacts, search the web, and send messages. How can I help you today?`,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        };
+      if (!sessionId) {
+        setSessionId(res.session_id);
+        fetchUserSessions();
       }
 
-      setMessages((prev) => [...prev, reply]);
-    }, 1200);
+      const assistantMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        sender: "assistant",
+        text: res.response_text,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        confirmation: res.pending_confirmation && res.confirmation_payload ? {
+          toolName: res.confirmation_payload.tool_name,
+          summary: res.confirmation_payload.message,
+          details: res.confirmation_payload.tool_args,
+          status: "pending",
+        } : undefined,
+      };
+
+      setMessages((prev) => [...prev, assistantMsg]);
+    } catch (err: any) {
+      const errorMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        sender: "assistant",
+        text: `⚠️ Error: ${err.message || "Failed to process chat message."}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
   const handleConfirmationAction = (msgId: string, action: "approved" | "rejected") => {
@@ -126,23 +165,32 @@ export default function ChatDashboardPage() {
       })
     );
 
-    const resultMsg: ChatMessage = {
-      id: Date.now().toString(),
-      sender: "assistant",
-      text: action === "approved" 
-        ? "✅ Action executed successfully! The tool audit log has been updated." 
-        : "❌ Action cancelled by user. No changes were made.",
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-    setMessages((prev) => [...prev, resultMsg]);
+    // Call backend with user decision (true = approved, false = rejected)
+    handleSendMessage("Proceeding with decision", action === "approved");
+  };
+
+  const handleNewChat = () => {
+    setSessionId(null);
+    setMessages([]);
   };
 
   const promptSuggestions = [
-    "📅 Schedule a meeting with Alex tomorrow at 3 PM",
+    "📅 Schedule a team sync meeting tomorrow at 3 PM",
     "⏰ Set a reminder to submit code review by 5 PM",
-    "🔍 Search web for latest LangGraph updates",
-    "✉️ Draft an update email to the product team",
+    "🔍 Search web for latest LangGraph features",
+    "✉️ Draft an update email to the project team",
   ];
+
+  if (isLoading || !token) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
+        <div className="flex items-center space-x-3 text-slate-400">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+          <span className="text-sm font-medium">Authenticating session...</span>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-slate-950 text-slate-100">
@@ -179,7 +227,7 @@ export default function ChatDashboardPage() {
         {/* New Chat Button */}
         <div className="p-3">
           <button
-            onClick={() => setMessages([])}
+            onClick={handleNewChat}
             className={`flex w-full items-center justify-center space-x-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 ${sidebarOpen ? "px-4" : "px-2"} py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 hover:from-indigo-600 hover:to-purple-700 transition-all`}
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -189,11 +237,33 @@ export default function ChatDashboardPage() {
           </button>
         </div>
 
-        {/* Tools Status */}
+        {/* Past Sessions & Tools Status */}
         {sidebarOpen && (
           <div className="flex-1 overflow-y-auto px-3 py-2 space-y-4">
+            {sessions.length > 0 && (
+              <div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 px-2">Recent Chats</span>
+                <div className="mt-2 space-y-1">
+                  {sessions.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => loadSessionTurns(s.id)}
+                      className={`flex w-full items-center space-x-2 rounded-lg px-2.5 py-2 text-xs transition-colors ${
+                        sessionId === s.id ? "bg-indigo-600/20 text-indigo-300 font-semibold border border-indigo-500/30" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+                      }`}
+                    >
+                      <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                      </svg>
+                      <span className="truncate text-left">{s.title}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div>
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 px-2">Connected MCP Tools</span>
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 px-2">FastMCP Tools</span>
               <div className="mt-2 space-y-1 text-xs">
                 {[
                   { name: "calendar-mcp", color: "bg-emerald-400" },
@@ -249,10 +319,10 @@ export default function ChatDashboardPage() {
         {/* Top Header */}
         <header className="flex h-16 items-center justify-between border-b border-slate-800/80 bg-slate-950/80 px-6 backdrop-blur-xl">
           <div className="flex items-center space-x-3">
-            <h2 className="text-base font-bold text-white">Alex Chat Assistant</h2>
+            <h2 className="text-base font-bold text-white">Alex AI Assistant</h2>
             <span className="flex items-center space-x-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-400">
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              LangGraph Ready
+              LangGraph Connected
             </span>
           </div>
         </header>
@@ -270,7 +340,7 @@ export default function ChatDashboardPage() {
               </div>
               <h3 className="text-2xl font-bold text-white">How can I help you today, {user?.name}?</h3>
               <p className="mt-2 text-sm text-slate-400 max-w-md">
-                I can schedule events, set reminders, search the web, manage contacts, and execute multi-tool workflows.
+                I can schedule events, set reminders, search the web, manage contacts, and execute multi-tool workflows via LangGraph.
               </p>
 
               {/* Prompt Suggestions */}
@@ -315,7 +385,7 @@ export default function ChatDashboardPage() {
                       <p>{msg.text}</p>
                     </div>
 
-                    {/* Interactive Confirmation Card (if any) */}
+                    {/* Interactive Confirmation Card */}
                     {msg.confirmation && (
                       <div className="rounded-2xl border border-indigo-500/40 bg-slate-900/90 p-4 shadow-xl backdrop-blur-xl space-y-3">
                         <div className="flex items-center justify-between text-xs font-semibold text-indigo-400">
@@ -347,7 +417,7 @@ export default function ChatDashboardPage() {
                       </div>
                     )}
 
-                    <span className="block text-[10px] text-slate-500 px-1">{msg.timestamp}</span>
+                    {msg.timestamp && <span className="block text-[10px] text-slate-500 px-1">{msg.timestamp}</span>}
                   </div>
                 </div>
               </div>

@@ -26,6 +26,11 @@ class Settings:
     ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 7)))
     
+    # Google OAuth 2.0 Credentials
+    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    GOOGLE_REDIRECT_URI: str = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/v1/auth/google/callback")
+    
     # FastMCP Server URLs
     CALENDAR_MCP_URL: str = os.getenv("CALENDAR_MCP_URL", "http://localhost:8001")
     CONTACTS_MCP_URL: str = os.getenv("CONTACTS_MCP_URL", "http://localhost:8002")
