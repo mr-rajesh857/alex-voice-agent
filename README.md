@@ -55,7 +55,7 @@ alex-voice-agent/
 │
 ├── docker-compose.yml              # Docker Compose setup
 ├── .env.example                    # Environment template
-└── voice-agent-project-plan.md     # Comprehensive Architectural Specification
+└── alex-chat-agent-project-plan.md     # Comprehensive Architectural Specification
 ```
 
 ---
