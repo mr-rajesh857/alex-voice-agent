@@ -1,40 +1,37 @@
-from pydantic_settings import BaseSettings
-from pydantic import Field
-from typing import Optional
+import os
+from dotenv import load_dotenv
 
-class Settings(BaseSettings):
-    PROJECT_NAME: str = "Alex Voice Agent API"
+# Load variables from .env file into environment
+load_dotenv()
+
+class Settings:
+    PROJECT_NAME: str = os.getenv("PROJECT_NAME", "Alex Voice Agent API")
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
     
     # Environment
-    ENVIRONMENT: str = Field(default="development", env="ENVIRONMENT")
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     
-    # Database
-    DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://alex_user:alex_password@localhost:5432/alex_db",
-        env="DATABASE_URL"
-    )
+    # Database & Redis Cache
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://alex_user:alex_password@localhost:5433/alex_db")
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     
     # Gemini / LLM
-    GEMINI_API_KEY: str = Field(default="", env="GEMINI_API_KEY")
-    GEMINI_MODEL: str = Field(default="gemini-1.5-flash", env="GEMINI_MODEL")
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
     
-    # Auth & Security
-    SECRET_KEY: str = Field(default="alex_secret_key_change_in_production_32bytes", env="SECRET_KEY")
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    # Security Secrets (Read directly from .env like process.env in Node)
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "alex_jwt_secret_token_signing_key_32bytes")
+    ENCRYPTION_KEY: str = os.getenv("ENCRYPTION_KEY", "alex_db_token_encryption_key_32bytes")
+    ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 7)))
     
     # FastMCP Server URLs
-    CALENDAR_MCP_URL: str = Field(default="http://localhost:8001", env="CALENDAR_MCP_URL")
-    CONTACTS_MCP_URL: str = Field(default="http://localhost:8002", env="CONTACTS_MCP_URL")
-    REMINDERS_MCP_URL: str = Field(default="http://localhost:8003", env="REMINDERS_MCP_URL")
-    SEARCH_RAG_MCP_URL: str = Field(default="http://localhost:8004", env="SEARCH_RAG_MCP_URL")
-    EMAIL_MESSAGING_MCP_URL: str = Field(default="http://localhost:8005", env="EMAIL_MESSAGING_MCP_URL")
-    USER_PREFS_MCP_URL: str = Field(default="http://localhost:8006", env="USER_PREFS_MCP_URL")
-    
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    CALENDAR_MCP_URL: str = os.getenv("CALENDAR_MCP_URL", "http://localhost:8001")
+    CONTACTS_MCP_URL: str = os.getenv("CONTACTS_MCP_URL", "http://localhost:8002")
+    REMINDERS_MCP_URL: str = os.getenv("REMINDERS_MCP_URL", "http://localhost:8003")
+    SEARCH_RAG_MCP_URL: str = os.getenv("SEARCH_RAG_MCP_URL", "http://localhost:8004")
+    EMAIL_MESSAGING_MCP_URL: str = os.getenv("EMAIL_MESSAGING_MCP_URL", "http://localhost:8005")
+    USER_PREFS_MCP_URL: str = os.getenv("USER_PREFS_MCP_URL", "http://localhost:8006")
 
 settings = Settings()

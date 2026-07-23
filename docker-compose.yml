@@ -11,12 +11,38 @@ services:
       POSTGRES_PASSWORD: alex_password
       POSTGRES_DB: alex_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U alex_user -d alex_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Adminer (Web Database Management GUI)
+  adminer:
+    image: adminer:latest
+    container_name: alex-adminer
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Redis (Cache, Session State & Audio Queue Manager)
+  redis:
+    image: redis:7-alpine
+    container_name: alex-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -31,9 +57,12 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://alex_user:alex_password@postgres:5432/alex_db
+      - REDIS_URL=redis://redis:6379/0
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   # Frontend (Next.js App)
@@ -51,3 +80,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
