@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Settings:
-    PROJECT_NAME: str = os.getenv("PROJECT_NAME", "Alex Voice Agent API")
+    PROJECT_NAME: str = os.getenv("PROJECT_NAME", "Alex Chat Agent API")
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
     

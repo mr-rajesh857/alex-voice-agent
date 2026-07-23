@@ -58,12 +58,12 @@ export default function RegisterPage() {
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-0.5 shadow-lg shadow-indigo-500/25">
               <div className="flex h-full w-full items-center justify-center rounded-[14px] bg-slate-950">
                 <svg className="h-7 w-7 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
                 </svg>
               </div>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">Create Alex Account</h1>
-            <p className="mt-2 text-sm text-slate-400">Join Alex Voice Agent for intelligent AI voice workflows</p>
+            <h1 className="text-2xl font-bold tracking-tight text-white">Create Alex Chat AI Account</h1>
+            <p className="mt-2 text-sm text-slate-400">Join Alex Chat AI for intelligent AI assistant workflows</p>
           </div>
 
           {/* Error Alert */}

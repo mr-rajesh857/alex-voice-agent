@@ -46,12 +46,12 @@ export default function LoginPage() {
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-0.5 shadow-lg shadow-indigo-500/25">
               <div className="flex h-full w-full items-center justify-center rounded-[14px] bg-slate-950">
                 <svg className="h-7 w-7 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
                 </svg>
               </div>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">Welcome back to Alex</h1>
-            <p className="mt-2 text-sm text-slate-400">Enter your credentials to access your voice agent dashboard</p>
+            <h1 className="text-2xl font-bold tracking-tight text-white">Welcome back to Alex AI</h1>
+            <p className="mt-2 text-sm text-slate-400">Enter your credentials to access your AI chat assistant dashboard</p>
           </div>
 
           {/* Error Alert */}
