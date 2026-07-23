@@ -1,7 +1,7 @@
-# Project "Alex" — Voice-Driven AI Assistant Agent
+# Project "Alex" — Chat-Driven AI Assistant Agent
 ### Full Production Project Plan & Architecture Specification
 
-Stack: LangGraph + LangChain + Python + FastAPI + Next.js + PostgreSQL (pgvector) + FastMCP + Deepgram / ElevenLabs Audio + Gemini LLM
+Stack: LangGraph + LangChain + Python + FastAPI + Next.js + PostgreSQL (pgvector) + FastMCP + Gemini LLM + WebSockets
 
 ---
 
@@ -9,20 +9,20 @@ Stack: LangGraph + LangChain + Python + FastAPI + Next.js + PostgreSQL (pgvector
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                                   NEXT.JS FRONTEND                                     │
-│  (MediaRecorder audio streaming, Web VAD, Live Transcript, Waveform, Confirmation UI)  │
+│                                   NEXT.JS CHAT FRONTEND                                │
+│   (Streaming Chat UI, Markdown Renderer, Confirmation Buttons, Typing Indicator)       │
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            │ WebSocket / Streamable HTTP
+                                            │ WebSocket / HTTP Stream
                                             ▼
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │                                    FASTAPI GATEWAY                                     │
-│     (JWT Auth, Audio Pipeline Gateway, STT/TTS Handlers, WebSocket Router, REST API)   │
+│     (JWT Auth, Chat Stream Handlers, WebSocket Router, History REST APIs)              │
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
                                             │
                                             ▼
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │                               LANGGRAPH AGENT BRAIN                                    │
-│   (Stateful Graph: Memory Retrieval ➔ Intent Extraction ➔ Slot Check ➔ Confirmation Gate)│
+│  (Stateful Graph: Memory Retrieval ➔ Intent Extraction ➔ Slot Check ➔ Confirmation Gate)│
 └───────────┬───────────────────────────────┬────────────────────────────┬───────────────┘
             │                               │                            │
             ▼                               ▼                            ▼
@@ -56,58 +56,73 @@ The core brain is modeled as a stateful graph (not a linear chain).
 
 ### Graph Nodes & Workflow
 1. `retrieve_memories` — Queries `pgvector` for user preferences, facts, and relevant context based on current query.
-2. `parse_intent` — Gemini extracts intent + entities (action, attendee, date, time, duration, query parameters).
+2. `parse_intent` — Gemini extracts intent + entities (action, attendee, date, time, duration, query parameters) from current turn + conversation context.
 3. `check_completeness` — Conditional edge:
    - If required slots missing ➔ go to `ask_clarification`.
    - If complete ➔ go to `resolve_entities`.
-4. `ask_clarification` — Generates a targeted follow-up question ("Kis time pe meeting fix karni hai?"), returns audio/text to user, pauses graph.
-5. `resolve_entities` — Calls `contacts-mcp` to resolve names, queries `calendar-mcp.find_free_slot` for vague time queries.
-6. `confirm_action` — Hard security gate for create/update/delete side-effects. Generates spoken confirmation ("3 baje Alex ke saath meeting fix kar du?") and waits for user confirmation.
+4. `ask_clarification` — Generates a targeted follow-up question ("Kis time pe meeting schedule karni hai?"), returns message to chat stream, pauses graph state.
+5. `resolve_entities` — Calls `contacts-mcp` to resolve contact names, queries `calendar-mcp.find_free_slot` for vague time queries.
+6. `confirm_action` — Hard security gate for create/update/delete side-effects. Emits an interactive confirmation payload to the frontend ("3 baje Alex ke saath meeting schedule kar du? [Confirm] [Cancel]") and waits for user response.
 7. `execute_tool` — Dispatches call to the matching FastMCP server tool.
 8. `store_memory` — Asynchronously extracts notable new user facts/preferences and writes to `pgvector`.
 9. `handle_error` — Graceful fallback handler if tool or API fails.
-10. `respond` — Prepares natural language response optimized for STT/TTS phrasing.
+10. `respond` — Prepares natural, well-formatted Markdown response for the Chat UI.
 
 ### Shared State Object Schema
 ```python
 from typing import TypedDict, Any, List, Dict, Optional
 
+class Message(TypedDict):
+    role: str       # "user", "assistant", "system", "tool"
+    content: str
+    timestamp: Optional[str]
+
 class AgentState(TypedDict):
     session_id: str
     user_id: str
-    conversation: List[Dict[str, str]]
+    user_name: Optional[str]
+    input_text: str
+    conversation: List[Message]
     retrieved_memories: List[str]
     intent: Optional[str]
     entities: Dict[str, Any]
     missing_slots: List[str]
+    requires_confirmation: bool
     pending_confirmation: bool
     confirmation_given: Optional[bool]
     tool_name: Optional[str]
     tool_args: Optional[Dict[str, Any]]
     tool_result: Optional[Dict[str, Any]]
-    is_interrupted: bool
+    final_response: Optional[str]
     error: Optional[str]
 ```
 
 ---
 
-## 3. Audio & Voice Pipeline Specification
+## 3. Real-Time Chat Protocol & Streaming Architecture
 
-### Audio Stream & VAD Architecture
-- **Client Capture**: WebRTC / `MediaRecorder` API streaming 16kHz PCM / Opus chunks over WebSocket.
-- **Voice Activity Detection (VAD)**:
-  - Client-side VAD (Web VAD / Silero WASM) for instant visual speech indicator.
-  - Server-side VAD (Silero VAD) on audio stream to detect speech start/stop accurately.
-- **STT (Speech-to-Text)**: Deepgram Nova-2 / Whisper Streaming WebSocket with word-level timestamps & language auto-detect.
-- **TTS (Text-to-Speech)**: ElevenLabs WebSocket API / Deepgram Aura returning streamed audio chunks (MP3/Opus) directly to frontend player.
-
-### Interruption (Barge-in) Control Flow
-When the user speaks while the AI agent is outputting TTS audio:
-1. Client VAD triggers speech start signal.
-2. Client sends `{"type": "interrupt"}` message over WebSocket.
-3. Backend immediately aborts active LLM generation stream and TTS synthesis task.
-4. Backend clears audio queue and sets `is_interrupted = True` in `AgentState`.
-5. Frontend clears current audio buffer playback instantly.
+### Message Payload Types over WebSocket (`/ws/chat`):
+1. **User Text Message**:
+   ```json
+   { "type": "text", "content": "Book a meeting with Rahul tomorrow at 3 PM" }
+   ```
+2. **Server Token Stream** (Real-time LLM streaming):
+   ```json
+   { "type": "stream_delta", "delta": "I am checking " }
+   ```
+3. **Interactive Confirmation Request**:
+   ```json
+   {
+     "type": "confirmation_request",
+     "action": "create_calendar_event",
+     "summary": "Schedule meeting with Rahul tomorrow at 3:00 PM",
+     "payload": { "title": "Meeting with Rahul", "start": "2026-07-24T15:00:00" }
+   }
+   ```
+4. **User Confirmation Reply**:
+   ```json
+   { "type": "confirmation_response", "approved": true }
+   ```
 
 ---
 
@@ -142,7 +157,7 @@ Each tool server is built using FastMCP and containerized independently.
 - `send_slack_message(channel, message)` *(Requires confirmation gate)*
 
 ### 6. `user-prefs-mcp`
-- `get_preferences()` — Fetches voice tone, TTS speed, timezone, language preferences.
+- `get_preferences()` — Fetches theme, persona tone, timezone, language preferences.
 - `update_preference(key, value)`
 
 ---
@@ -158,6 +173,7 @@ CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
     name VARCHAR(255) NOT NULL,
+    hashed_password TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -176,7 +192,7 @@ CREATE TABLE user_memories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     memory_text TEXT NOT NULL,
-    category VARCHAR(50), -- preference, relationship, fact
+    category VARCHAR(50),
     embedding vector(1536),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -185,6 +201,7 @@ CREATE TABLE user_memories (
 CREATE TABLE sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    title VARCHAR(255) DEFAULT 'New Chat',
     started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     ended_at TIMESTAMP WITH TIME ZONE
 );
@@ -192,7 +209,7 @@ CREATE TABLE sessions (
 CREATE TABLE conversation_turns (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
-    role VARCHAR(20) NOT NULL, -- user, assistant, system
+    role VARCHAR(20) NOT NULL, -- user, assistant, system, tool
     content TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -219,42 +236,33 @@ CREATE TABLE tool_call_audit (
 
 ---
 
-## 6. Multilingual & Hinglish Code-Switching Engine
-
-- **STT Configuration**: Deepgram language set to `hi-Latn` / `multilingual` to support seamless Hindi + English switching.
-- **LLM Prompting**: Prompts explicitly instruct Gemini to process Hinglish inputs (e.g. *"Kal subah 10 baje team sync fix kar do"*) and retain natural conversational Hinglish or clear English in response.
-- **TTS Phrasing**: Output text is pre-processed for phonetic readability before being sent to TTS engines.
-
----
-
-## 7. Repo & Folder Structure
+## 6. Repo & Folder Structure
 
 ```
 alex-voice-agent/
 ├── backend/                        # FastAPI Backend & LangGraph Orchestrator
 │   ├── app/
-│   │   ├── audio/                  # STT streaming, TTS streaming, VAD processors
-│   │   ├── core/                   # App config, security, JWT auth, logging
-│   │   ├── db/                     # SQLAlchemy 2.0 async models, pgvector session, alembic migrations
+│   │   ├── core/                   # App config (os.getenv), security, JWT auth
+│   │   ├── db/                     # SQLAlchemy 2.0 async models, pgvector session
 │   │   ├── graph/                  # LangGraph nodes, state, edges, checkpointer
 │   │   ├── llm/                    # Gemini client wrappers, prompt templates
 │   │   ├── memory/                 # Vector memory indexing & retriever
 │   │   ├── mcp_client/             # FastMCP Client bindings & tool callers
-│   │   └── routers/                # WebSocket audio/chat endpoint, REST auth, history, settings
+│   │   └── routers/                # WebSocket chat endpoint, REST auth, history
 │   ├── tests/                      # Pytest unit & integration test suite
-│   ├── Dockerfile
-│   └── requirements.txt
+│   ├── requirements.txt
+│   └── .env
 │
-├── frontend/                       # Next.js 14 Frontend App
-│   ├── public/
+├── frontend/                       # Next.js 15 Frontend App
 │   ├── src/
-│   │   ├── app/                    # App Router pages (dashboard, chat, history, settings)
-│   │   ├── components/             # Audio Waveform, Live Transcript, Confirmation Modal, Chat UI
-│   │   ├── hooks/                  # useAudioRecorder, useWebSocket, useVAD
-│   │   ├── lib/                    # API client, audio utils
+│   │   ├── app/                    # App Router (/login, /register, chat dashboard /)
+│   │   ├── components/             # Chat UI, Message Bubbles, Interactive Confirmation Card
+│   │   ├── context/                # AuthContext provider
+│   │   ├── hooks/                  # useWebSocketChat
+│   │   ├── lib/                    # API client with JWT bearer injection
 │   │   └── types/                  # TypeScript interfaces
 │   ├── package.json
-│   └── tailwind.config.js / globals.css
+│   └── .env.local
 │
 ├── mcp-servers/                    # Standalone FastMCP Tool Servers
 │   ├── calendar-mcp/
@@ -265,61 +273,38 @@ alex-voice-agent/
 │   └── user-prefs-mcp/
 │
 ├── infra/                          # Infrastructure & Deployment
-│   ├── docker-compose.yml          # Multi-container orchestration (Postgres, Backend, Frontend, MCP servers)
-│   ├── postgres/                   # Init SQL scripts & pgvector setup
-│   └── prometheus/                 # Monitoring metrics
+│   └── postgres/                   # Init SQL scripts & pgvector setup
 │
-├── docker-compose.yml              # Root Docker Compose for easy `docker compose up postgres`
+├── docker-compose.yml              # Local Docker infrastructure (postgres, adminer, redis)
 └── voice-agent-project-plan.md     # Architectural Plan
 ```
 
 ---
 
-## 8. Latency Budget & Observability
+## 7. Phased Implementation Roadmap
 
-### Latency Budget Target (< 900ms Total Roundtrip)
-- **STT Processing**: ~150-200ms
-- **LangGraph Routing & Gemini TTFT**: ~300-400ms
-- **TTS TTFB (Time to First Audio Byte)**: ~150-200ms
-- **Total Latency**: ~650-800ms
-
-### Observability & Evaluation Suite
-- **LangSmith / OpenTelemetry**: Full trace from WebSocket ingress ➔ STT ➔ LangGraph Nodes ➔ FastMCP Tool Execution ➔ TTS streaming.
-- **Latency Benchmarking**: Automated metrics logging for each stage of voice processing.
-- **Eval Suite**: Continuous integration test harness simulating conversational turns to verify intent slot parsing and confirmation security gates.
-
----
-
-## 9. Phased Implementation Roadmap
-
-### Phase 1 — User Authentication & JWT Security (CURRENT FOCUS)
+### Phase 1 — User Authentication & JWT Security (COMPLETED)
 - User table schema with bcrypt password hashing.
 - Backend FastAPI Auth REST APIs: `POST /auth/register`, `POST /auth/login`, `GET /auth/me`.
 - JWT Token generation & verification middleware (`get_current_user`).
-- Next.js modern, responsive Auth Pages (`/login` & `/register`) with Tailwind CSS & persistent session token storage.
+- Next.js modern, responsive Auth Pages (`/login` & `/register`) with persistent session token storage.
 
-### Phase 2 — Core LangGraph Agent Engine (Text)
-- Implement `AgentState` and LangGraph node structure.
-- Integrate Gemini LLM wrapper and prompt templates.
-- Implement clarification loop and strict confirmation gate.
+### Phase 2 — Core LangGraph Chat Agent Engine (CURRENT FOCUS)
+- Implement `AgentState` and LangGraph node structure for text chat.
+- Integrate Gemini LLM wrapper, streaming token generation, and prompt templates.
+- Implement clarification loop and interactive confirmation gate.
 
 ### Phase 3 — FastMCP Tool Ecosystem Integration
 - Build and containerize `calendar-mcp`, `contacts-mcp`, and `reminders-mcp`.
 - Connect FastMCP client bindings to LangGraph `execute_tool` node.
 - Implement `tool_call_audit` database logger.
 
-### Phase 4 — Audio Pipeline & WebSockets
-- Implement WebSocket audio streaming router in FastAPI with JWT connection upgrade auth.
-- Integrate STT (Deepgram/Whisper) and TTS (ElevenLabs/Deepgram Aura) streaming.
-- Add VAD and Barge-in interruption protocol.
+### Phase 4 — Real-time Chat UI & WebSocket Streaming
+- Implement WebSocket chat endpoint (`/ws/chat`) in FastAPI with JWT token upgrade auth.
+- Build Next.js Chat interface with streaming markdown response, typing indicator, and session history sidebar.
+- Build interactive Confirmation Modal / Card UI for side-effecting actions.
 
-### Phase 5 — Memory, Search & Extended MCPs
+### Phase 5 — Memory, RAG Search & Extended MCPs
 - Implement `user_memories` vector search with `pgvector`.
 - Build `search-rag-mcp`, `email-messaging-mcp`, and `user-prefs-mcp`.
 - Connect long-term memory retrieval node into LangGraph pre-execution state.
-
-### Phase 6 — Frontend Voice Assistant Dashboard & Polish
-- Build Next.js voice recording waveform component and live transcript stream.
-- Build Confirmation Modal UI for side-effecting actions.
-- Add session history view and settings dashboard.
-

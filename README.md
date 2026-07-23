@@ -1,6 +1,6 @@
-# 🎙️ Alex — Voice-Driven AI Assistant Agent
+# 💬 Alex — Chat-Driven AI Assistant Agent
 
-A production-grade, voice-driven AI assistant powered by **LangGraph**, **LangChain**, **FastAPI**, **Next.js 15**, **FastMCP tool servers**, and **PostgreSQL (pgvector)**.
+A production-grade, chat-driven AI assistant powered by **LangGraph**, **LangChain**, **FastAPI**, **Next.js 15**, **FastMCP tool servers**, and **PostgreSQL (pgvector)**.
 
 ---
 
