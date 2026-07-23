@@ -3,15 +3,50 @@ import base64
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
+from app.core.config import settings
 
 ACTIVE_GOOGLE_OAUTH_TOKEN: Optional[str] = None
+ACTIVE_GOOGLE_REFRESH_TOKEN: Optional[str] = None
 
-def set_google_oauth_token(token: str):
-    global ACTIVE_GOOGLE_OAUTH_TOKEN
+
+def set_google_oauth_token(token: str, refresh_token: Optional[str] = None):
+    global ACTIVE_GOOGLE_OAUTH_TOKEN, ACTIVE_GOOGLE_REFRESH_TOKEN
     ACTIVE_GOOGLE_OAUTH_TOKEN = token
+    if refresh_token:
+        ACTIVE_GOOGLE_REFRESH_TOKEN = refresh_token
+
 
 def get_google_oauth_token() -> Optional[str]:
+    global ACTIVE_GOOGLE_OAUTH_TOKEN
     return ACTIVE_GOOGLE_OAUTH_TOKEN
+
+
+async def refresh_google_access_token() -> Optional[str]:
+    """Uses refresh token to obtain a fresh access token from Google OAuth endpoint."""
+    global ACTIVE_GOOGLE_OAUTH_TOKEN, ACTIVE_GOOGLE_REFRESH_TOKEN
+    if not ACTIVE_GOOGLE_REFRESH_TOKEN:
+        return None
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": settings.GOOGLE_CLIENT_ID,
+                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                    "refresh_token": ACTIVE_GOOGLE_REFRESH_TOKEN,
+                    "grant_type": "refresh_token",
+                }
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                new_access_token = data.get("access_token")
+                if new_access_token:
+                    ACTIVE_GOOGLE_OAUTH_TOKEN = new_access_token
+                    return new_access_token
+    except Exception:
+        pass
+    return None
 
 
 def create_raw_email(to: str, subject: str, body: str) -> str:
@@ -25,24 +60,29 @@ def create_raw_email(to: str, subject: str, body: str) -> str:
 
 async def execute_mcp_tool(tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Executes REAL Google Calendar API and REAL Gmail API requests.
+    Universal FastMCP tool execution router supporting real Google Calendar and Gmail API execution.
+    Auto-refreshes Google OAuth access token if expired (401).
     """
     token = get_google_oauth_token()
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    
+    if not token:
+        # Prompt user to perform Google Login
+        login_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={settings.GOOGLE_CLIENT_ID}&redirect_uri={settings.GOOGLE_REDIRECT_URI}&response_type=code&scope=https://www.googleapis.com/auth/gmail.compose%20https://www.googleapis.com/auth/calendar&access_type=offline&prompt=consent"
+        return {
+            "status": "error",
+            "message": f"🔑 Google OAuth session expired or not authenticated. Please [Click Here to Sign in with Google]({login_url}) to authorize Gmail & Calendar access."
+        }
 
-    # -------------------------------------------------------------
-    # 1. REAL GMAIL API — Send Email
-    # -------------------------------------------------------------
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. GMAIL API — Send Email
     if tool_name == "send_email":
-        recipient = tool_args.get("recipient") or tool_args.get("to") or "rajeshkumarpanda857@gmail.com"
-        subject = tool_args.get("subject") or "Interview Meeting Invitation"
-        body = tool_args.get("body") or f"Hi,\n\nYou have been scheduled for an interview meeting.\n\nBest regards,\nAlex AI Assistant"
+        recipient = tool_args.get("recipient") or tool_args.get("to")
+        subject = tool_args.get("subject") or "Notification from Alex AI"
+        body = tool_args.get("body") or f"Hi,\n\n{tool_args.get('input_text', 'Notification message.')}\n\nBest regards,\nAlex AI Assistant"
 
-        if not token:
-            return {
-                "status": "error",
-                "message": "Google OAuth token not found. Please log in with Google first to send real emails."
-            }
+        if not recipient:
+            return {"status": "error", "message": "No recipient email address provided."}
 
         try:
             raw_email = create_raw_email(recipient, subject, body)
@@ -52,54 +92,52 @@ async def execute_mcp_tool(tool_name: str, tool_args: Dict[str, Any]) -> Dict[st
                     headers=headers,
                     json={"raw": raw_email}
                 )
+                
+                # If 401 Unauthorized, attempt token refresh once
+                if resp.status_code == 401:
+                    new_token = await refresh_google_access_token()
+                    if new_token:
+                        resp = await client.post(
+                            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                            headers={"Authorization": f"Bearer {new_token}"},
+                            json={"raw": raw_email}
+                        )
+
                 if resp.status_code == 200:
                     data = resp.json()
                     return {
                         "status": "success",
-                        "message": f"✅ REAL Email sent to {recipient} via Gmail API! (Message ID: {data.get('id')})",
-                        "email_id": data.get("id"),
-                        "recipient": recipient,
-                        "subject": subject
+                        "message": f"✅ REAL Email sent to {recipient} via Gmail API! (Subject: '{subject}', Message ID: {data.get('id')})",
+                        "email_id": data.get("id")
                     }
                 else:
+                    login_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={settings.GOOGLE_CLIENT_ID}&redirect_uri={settings.GOOGLE_REDIRECT_URI}&response_type=code&scope=https://www.googleapis.com/auth/gmail.compose%20https://www.googleapis.com/auth/calendar&access_type=offline&prompt=consent"
                     return {
-                        "status": "error",
-                        "message": f"Failed to send email via Gmail API: {resp.text}"
+                        "status": "error", 
+                        "message": f"🔑 Google session expired. Please [Click Here to Sign In with Google]({login_url}) to grant access."
                     }
         except Exception as e:
             return {"status": "error", "message": f"Error sending email: {str(e)}"}
 
-    # -------------------------------------------------------------
-    # 2. REAL GOOGLE CALENDAR API — Create Event
-    # -------------------------------------------------------------
+    # 2. GOOGLE CALENDAR API — Create Event
     elif tool_name == "create_calendar_event":
-        title = tool_args.get("title") or "Interview Meeting"
-        recipient = tool_args.get("recipient") or tool_args.get("to") or tool_args.get("attendees")
-        date_val = tool_args.get("date", "2026-07-25")
-        start_time_val = tool_args.get("start_time", "08:30:00")
-        end_time_val = tool_args.get("end_time", "09:30:00")
+        title = tool_args.get("title") or "Meeting"
+        recipient = tool_args.get("recipient") or tool_args.get("to")
+        date_val = tool_args.get("date", datetime.now().strftime("%Y-%m-%d"))
+        start_time_val = tool_args.get("start_time", "09:00:00")
+        end_time_val = tool_args.get("end_time", "10:00:00")
 
         start_iso = f"{date_val}T{start_time_val}+05:30"
         end_iso = f"{date_val}T{end_time_val}+05:30"
 
-        if not token:
-            return {
-                "status": "error",
-                "message": "Google OAuth token not found. Please log in with Google first."
-            }
-
         event_payload = {
             "summary": title,
-            "description": f"Interview meeting scheduled by Alex AI Assistant for {recipient}.",
+            "description": f"Scheduled by Alex AI Assistant.",
             "start": {"dateTime": start_iso, "timeZone": "Asia/Kolkata"},
             "end": {"dateTime": end_iso, "timeZone": "Asia/Kolkata"},
         }
-
         if recipient:
-            if isinstance(recipient, str):
-                event_payload["attendees"] = [{"email": recipient}]
-            elif isinstance(recipient, list):
-                event_payload["attendees"] = [{"email": email} for email in recipient]
+            event_payload["attendees"] = [{"email": recipient}]
 
         try:
             async with httpx.AsyncClient() as client:
@@ -108,38 +146,44 @@ async def execute_mcp_tool(tool_name: str, tool_args: Dict[str, Any]) -> Dict[st
                     headers=headers,
                     json=event_payload
                 )
+
+                if resp.status_code == 401:
+                    new_token = await refresh_google_access_token()
+                    if new_token:
+                        resp = await client.post(
+                            "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+                            headers={"Authorization": f"Bearer {new_token}"},
+                            json=event_payload
+                        )
+
                 if resp.status_code in (200, 201):
                     data = resp.json()
-                    
-                    # Send invitation email via Gmail API
                     email_result = ""
                     if recipient:
-                        email_recipient = recipient[0] if isinstance(recipient, list) else recipient
                         email_res = await execute_mcp_tool("send_email", {
-                            "recipient": email_recipient,
-                            "subject": f"Interview Meeting Invitation - {date_val} (8:30 AM IST)",
-                            "body": f"Hi,\n\nYour interview meeting '{title}' has been scheduled on Google Calendar for {date_val} from 08:30 AM to 09:30 AM IST.\n\nGoogle Calendar Link: {data.get('htmlLink')}\n\nBest regards,\nAlex AI Assistant"
+                            "recipient": recipient,
+                            "subject": f"Meeting Invitation: {title}",
+                            "body": f"Hi,\n\nYour meeting '{title}' has been scheduled on Google Calendar for {date_val} ({start_time_val} - {end_time_val} IST).\n\nCalendar Link: {data.get('htmlLink')}\n\nBest regards,\nAlex AI Assistant"
                         })
                         email_result = f" & {email_res.get('message')}"
 
                     return {
                         "status": "success",
-                        "message": f"📅 REAL Google Calendar Event created for {date_val} (8:30 - 9:30 IST)! Link: {data.get('htmlLink')}{email_result}",
+                        "message": f"📅 REAL Google Calendar Event created for '{title}' on {date_val}! Link: {data.get('htmlLink')}{email_result}",
                         "event_id": data.get("id"),
                         "html_link": data.get("htmlLink")
                     }
                 else:
+                    login_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={settings.GOOGLE_CLIENT_ID}&redirect_uri={settings.GOOGLE_REDIRECT_URI}&response_type=code&scope=https://www.googleapis.com/auth/gmail.compose%20https://www.googleapis.com/auth/calendar&access_type=offline&prompt=consent"
                     return {
-                        "status": "error",
-                        "message": f"Failed to create Google Calendar event: {resp.text}"
+                        "status": "error", 
+                        "message": f"🔑 Google session expired. Please [Click Here to Sign In with Google]({login_url}) to grant access."
                     }
         except Exception as e:
-            return {"status": "error", "message": f"Error creating calendar event: {str(e)}"}
+            return {"status": "error", "message": f"Error creating event: {str(e)}"}
 
-    # -------------------------------------------------------------
-    # 3. Default fallback
-    # -------------------------------------------------------------
+    # Default fallbacks
     return {
         "status": "success",
-        "message": f"Executed tool '{tool_name}' with args {tool_args}.",
+        "message": f"Processed request for tool '{tool_name}' with parameters {tool_args}."
     }

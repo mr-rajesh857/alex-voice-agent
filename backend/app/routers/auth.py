@@ -131,7 +131,7 @@ async def google_oauth_callback(
 
         # Save token globally for real Google API tool execution
         if google_access_token:
-            set_google_oauth_token(google_access_token)
+            set_google_oauth_token(google_access_token, token_json.get("refresh_token"))
 
         # 2. Test Gmail API profile using the access token
         gmail_resp = await client.get(
