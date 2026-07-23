@@ -292,10 +292,11 @@ alex-voice-agent/
 
 ## 9. Phased Implementation Roadmap
 
-### Phase 1 — Project Foundation & Folder Structure
-- Initialize complete directory tree and repository skeleton.
-- Set up Docker Compose environment with PostgreSQL + `pgvector`.
-- Configure base FastAPI and Next.js projects.
+### Phase 1 — User Authentication & JWT Security (CURRENT FOCUS)
+- User table schema with bcrypt password hashing.
+- Backend FastAPI Auth REST APIs: `POST /auth/register`, `POST /auth/login`, `GET /auth/me`.
+- JWT Token generation & verification middleware (`get_current_user`).
+- Next.js modern, responsive Auth Pages (`/login` & `/register`) with Tailwind CSS & persistent session token storage.
 
 ### Phase 2 — Core LangGraph Agent Engine (Text)
 - Implement `AgentState` and LangGraph node structure.
@@ -308,7 +309,7 @@ alex-voice-agent/
 - Implement `tool_call_audit` database logger.
 
 ### Phase 4 — Audio Pipeline & WebSockets
-- Implement WebSocket audio streaming router in FastAPI.
+- Implement WebSocket audio streaming router in FastAPI with JWT connection upgrade auth.
 - Integrate STT (Deepgram/Whisper) and TTS (ElevenLabs/Deepgram Aura) streaming.
 - Add VAD and Barge-in interruption protocol.
 
@@ -317,12 +318,8 @@ alex-voice-agent/
 - Build `search-rag-mcp`, `email-messaging-mcp`, and `user-prefs-mcp`.
 - Connect long-term memory retrieval node into LangGraph pre-execution state.
 
-### Phase 6 — Frontend UI & Polish
+### Phase 6 — Frontend Voice Assistant Dashboard & Polish
 - Build Next.js voice recording waveform component and live transcript stream.
 - Build Confirmation Modal UI for side-effecting actions.
 - Add session history view and settings dashboard.
 
-### Phase 7 — Production Hardening & Observability
-- OAuth2 token flow and token encryption in Postgres.
-- Add LangSmith / OpenTelemetry tracing and latency monitoring.
-- Comprehensive unit/integration test suite.
