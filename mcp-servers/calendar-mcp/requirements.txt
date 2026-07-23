@@ -1,0 +1,4 @@
+fastmcp>=0.1.0
+pydantic>=2.7.0
+google-api-python-client>=2.120.0
+google-auth-oauthlib>=1.2.0
