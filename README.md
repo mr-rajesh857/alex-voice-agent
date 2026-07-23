@@ -83,15 +83,17 @@ cp backend/.env.example backend/.env
 
 ---
 
-### Step 2: Start PostgreSQL Database (Docker)
+### Step 2: Start Infrastructure Services (PostgreSQL, Adminer, Redis via Docker)
 
-In the root directory, start the PostgreSQL container (with `pgvector` enabled) on port `5433`:
+In the root directory, start the database, Adminer GUI, and Redis containers:
 
 ```bash
-docker compose up 
+docker compose up -d
 ```
 
-> **Verify Status**: Run `docker compose ps` to ensure the `alex-postgres` container is healthy.
+- **PostgreSQL Database**: Port `5433` (`postgresql+asyncpg://alex_user:alex_password@localhost:5433/alex_db`)
+- **Adminer DB GUI**: Open [http://localhost:8080](http://localhost:8080)
+- **Redis Cache**: Port `6379` (`redis://localhost:6379/0`)
 
 ---
 
